@@ -1,0 +1,26 @@
+{
+  "test18": {
+    "display_name": "Test18",
+    "threshold": 0.7259094417095184,
+    "precision": 0.6619718309859155,
+    "recall": 0.45410628019323673,
+    "mcc": 0.37533136667646594,
+    "auc": 0.7713345560470385
+  },
+  "apo_test": {
+    "display_name": "Apo test",
+    "threshold": 0.34659041464328766,
+    "precision": 0.4666666666666667,
+    "recall": 0.5526315789473685,
+    "mcc": 0.42029151533117354,
+    "auc": 0.8051511758118701
+  },
+  "conformational_test": {
+    "display_name": "Conformational test",
+    "threshold": 0.44764769077301025,
+    "precision": 0.7461928934010152,
+    "recall": 0.551594746716698,
+    "mcc": 0.4126081198052458,
+    "auc": 0.7594668916876876
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "data_root": "data/processed",
+  "metadata_csv": "data/metadata/rna_ligand_metadata.csv",
+  "epochs": 220,
+  "patience": 35,
+  "batch_size": 36,
+  "hidden_dim": 160,
+  "num_layers": 3,
+  "ttn_bond_dim": 24,
+  "quantum_state_dim": 12,
+  "ligand_candidate_cap": 12,
+  "candidate_topk": 18,
+  "dropout": 0.4871321400398797,
+  "lr": 0.00043018450019043384,
+  "weight_decay": 0.000002822258607186508,
+  "seed": 497,
+  "split_seed": 42,
+  "deterministic": true,
+  "disable_seq_view": false,
+  "disable_sec_view": false,
+  "disable_long_view": false
+}

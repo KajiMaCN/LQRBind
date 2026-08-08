@@ -1,0 +1,18 @@
+{
+  "description": "Reference produced by two independent deterministic seed-497 cold-start runs on separate NVIDIA A40 GPUs.",
+  "checkpoint_sha256": "f2d0cd153240cb032a18e4a3e2b4a9012628bc73c147c79e5cf16b673265d9df",
+  "best_epoch": 31,
+  "best_threshold": 0.6415221095085144,
+  "validation_auc": 0.7280658414811734,
+  "datasets": {
+    "test18": {
+      "auc": 0.7719279318157299
+    },
+    "apo_test": {
+      "auc": 0.8036674132138858
+    },
+    "conformational_test": {
+      "auc": 0.7617859248154497
+    }
+  }
+}
