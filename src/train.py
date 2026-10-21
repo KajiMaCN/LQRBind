@@ -134,7 +134,6 @@ def main():
         ttn_bond_dim=args.ttn_bond_dim,
         quantum_state_dim=args.quantum_state_dim,
         candidate_topk=args.candidate_topk,
-        ligand_vocab_size=bundle.ligand_vocab_size,
         ligand_feature_dim=bundle.ligand_feature_dim,
         use_seq_view=not args.disable_seq_view,
         use_sec_view=not args.disable_sec_view,
@@ -142,8 +141,7 @@ def main():
     ).to(device)
 
     positives, negatives = count_positive_negative(training_dataset)
-    raw_positive_weight = negatives / max(positives, 1)
-    positive_weight = 1.0 + (raw_positive_weight - 1.0)
+    positive_weight = negatives / max(positives, 1)
     criterion = LQRBindLoss(positive_weight=positive_weight)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 

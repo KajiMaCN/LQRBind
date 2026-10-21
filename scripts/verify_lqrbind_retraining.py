@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare a completed deterministic retraining run with the packaged reference."""
+"""Compare a training run with an explicitly selected, version-matched reference."""
 
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reference",
         type=Path,
-        default=ROOT / "configs" / "lqrbind_retraining_reference.json",
+        required=True,
+        help="Reference for the same model revision. The packaged legacy reference predates model cleanup.",
     )
     parser.add_argument("--tolerance", type=float, default=1e-12)
     return parser.parse_args()

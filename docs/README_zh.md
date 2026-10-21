@@ -73,7 +73,11 @@ python scripts/evaluate_lqrbind.py --device auto --save-predictions
 | Apo test | 0.467 | 0.553 | 0.420 | 0.805 |
 | Conformational test | 0.746 | 0.552 | 0.413 | 0.759 |
 
+精简后的模型包含 2,541,513 个参数。加载原始检查点时会排除未参与计算的历史参数，清理前后的预测完全一致。
+
 ## 训练
+
+移除未使用的模块会改变从头训练时的随机初始化顺序。历史文件 `lqrbind_retraining_reference.json` 仅适用于清理前的实现。
 
 可以在不启动训练的情况下查看完整训练命令：
 
@@ -105,6 +109,7 @@ LQRBind/
 ├── expected_predictions/    # 用于精确验证的参考输出
 ├── scripts/                 # 评估、训练与验证入口脚本
 ├── src/                     # 模型、数据、损失、指标与训练代码
+├── tests/                   # 检查点兼容性与预测回归测试
 ├── environment.yml
 └── requirements.txt
 ```

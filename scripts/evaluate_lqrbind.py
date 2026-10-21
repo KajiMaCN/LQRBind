@@ -81,7 +81,6 @@ def build_model(config: dict, bundle) -> LQRBind:
         ttn_bond_dim=int(config["ttn_bond_dim"]),
         quantum_state_dim=int(config["quantum_state_dim"]),
         candidate_topk=int(config["candidate_topk"]),
-        ligand_vocab_size=bundle.ligand_vocab_size,
         ligand_feature_dim=bundle.ligand_feature_dim,
         use_seq_view=not config.get("disable_seq_view", False),
         use_sec_view=not config.get("disable_sec_view", False),

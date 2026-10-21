@@ -55,26 +55,6 @@ def _topk_candidate_mask(scores: torch.Tensor, batch_index: torch.Tensor, k: int
     return mask
 
 
-class _CheckpointEdgeParameters(nn.Module):
-    """Checkpoint-compatible parameter container retained by the released model."""
-
-    def __init__(self, hidden_dim: int, dropout: float):
-        super().__init__()
-        self.edge_mlp = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2 + 7),
-            nn.Linear(hidden_dim * 2 + 7, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.msg_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.out_proj = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-        )
-
-
 class QuantumStructuralEncodingLite(nn.Module):
     def __init__(self, hidden_dim: int, state_dim: int, dropout: float):
         super().__init__()
@@ -522,7 +502,6 @@ class LQRBindQSEReadout(nn.Module):
         hidden_dim: int,
         num_scales: int,
         state_dim: int,
-        ligand_vocab_size: int,
         ligand_feature_dim: int,
         dropout: float,
         candidate_topk: int = 18,
@@ -588,28 +567,10 @@ class LQRBindQSEReadout(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, 1),
         )
-        # Inactive parameter slots retained for strict checkpoint compatibility.
-        self.ligand_embedding = nn.Embedding(ligand_vocab_size, hidden_dim)
         self.ligand_geometry_proj = nn.Sequential(
             nn.LayerNorm(ligand_feature_dim),
             nn.Linear(ligand_feature_dim, hidden_dim),
             nn.GELU(),
-        )
-        self.ligand_token_proj = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-        )
-        self.ligand_context_proj = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-        )
-        self.ligand_score = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 1),
         )
         self.rerank_head = nn.Sequential(
             nn.LayerNorm(hidden_dim * 4 + 11),
@@ -664,7 +625,6 @@ class LQRBindQSEReadout(nn.Module):
 
     def reset_parameters(self):
         nn.init.normal_(self.scale_embeddings, mean=0.0, std=0.02)
-        nn.init.normal_(self.ligand_embedding.weight, mean=0.0, std=0.02)
 
     def _reset_adapter(self, gate_bias: float):
         final_delta = self.rerank_head[-1]
@@ -774,6 +734,8 @@ class LQRBindQSEReadout(nn.Module):
         ).sum(dim=-1, keepdim=True) / entropy_norm
 
         ligand_geometry_context = ligand_geometry_graph[batch_index]
+        # The two equal context columns below are part of the trained LayerNorm input.
+        # Keep their layout when loading the original weights.
         ligand_context = ligand_geometry_context
         ligand_entropy = ligand_entropy_graph[batch_index]
         ligand_known = torch.ones_like(ligand_entropy)
@@ -1008,35 +970,11 @@ class MultiplexResidueBlock(nn.Module):
     ):
         super().__init__()
 
-        # Keep inactive parameter slots from the published training snapshot so
-        # the paper checkpoint loads strictly and deterministic retraining keeps
-        # the same initialization and serialization order.
         self.seq_conv = GCNConv(hidden_dim, hidden_dim, add_self_loops=False)
         # Legacy checkpoint names: ``spatial`` stores the secondary-contact
         # branch and ``inter_chain`` stores the long-range-contact branch.
         self.spatial_conv = GCNConv(hidden_dim, hidden_dim, add_self_loops=False)
         self.inter_chain_conv = GCNConv(hidden_dim, hidden_dim, add_self_loops=False)
-        self.agent_conv = GCNConv(hidden_dim, hidden_dim, add_self_loops=False)
-        self.spatial_geo_conv = _CheckpointEdgeParameters(hidden_dim, dropout)
-        self.inter_geo_conv = _CheckpointEdgeParameters(hidden_dim, dropout)
-        self.spatial_frame_conv = _CheckpointEdgeParameters(hidden_dim, dropout)
-        self.inter_frame_conv = _CheckpointEdgeParameters(hidden_dim, dropout)
-        self.spatial_geo_alpha = nn.Parameter(torch.tensor(-2.2))
-        self.inter_geo_alpha = nn.Parameter(torch.tensor(-2.2))
-        self.tertiary_reliability_alpha = nn.Parameter(torch.zeros(1))
-        self.tertiary_residual_reliability_alpha = nn.Parameter(torch.zeros(1))
-        self.spatial_frame_alpha = nn.Parameter(torch.tensor(-2.2))
-        self.inter_frame_alpha = nn.Parameter(torch.tensor(-2.2))
-        self.agent_evidence_alpha = nn.Parameter(torch.tensor(-2.6))
-        self.spatial_role_alpha = nn.Parameter(torch.zeros(1))
-        self.inter_role_alpha = nn.Parameter(torch.zeros(1))
-        self.seq_branch_norm = nn.LayerNorm(hidden_dim)
-        self.spatial_branch_norm = nn.LayerNorm(hidden_dim)
-        self.inter_branch_norm = nn.LayerNorm(hidden_dim)
-        self.agent_branch_norm = nn.LayerNorm(hidden_dim)
-        self.seq_branch_gain = nn.Parameter(torch.ones(1))
-        self.spatial_branch_gain = nn.Parameter(torch.ones(1))
-        self.inter_branch_gain = nn.Parameter(torch.ones(1))
         self.cross_view_fusion = TTNEntanglementFusion(
             hidden_dim=hidden_dim,
             bond_dim=ttn_bond_dim,
@@ -1073,17 +1011,39 @@ class MultiplexResidueBlock(nn.Module):
             long_features=long_features,
             context=x,
         )
-        agent_features = torch.zeros_like(x)
-        agent_scale = 0.20 * torch.sigmoid(self.agent_evidence_alpha)
-        branch_summary = (
-            seq_features + sec_features + long_features + agent_scale * agent_features
-        )
+        branch_summary = seq_features + sec_features + long_features
         updated = self.mlp(torch.cat([x, entangled_views, branch_summary], dim=-1))
         return self.norm(x + self.dropout(updated))
 
 
+def _is_legacy_unused_key(key: str) -> bool:
+    """Recognize parameter names that never affected the released forward pass."""
+    parts = key.split(".")
+    if len(parts) >= 3 and parts[0] == "head":
+        return parts[1] in {
+            "ligand_embedding", "ligand_token_proj", "ligand_context_proj", "ligand_score"
+        }
+    if len(parts) >= 3 and parts[0] == "layers" and parts[1].isdigit():
+        modules = {
+            "agent_conv", "spatial_geo_conv", "inter_geo_conv",
+            "spatial_frame_conv", "inter_frame_conv", "seq_branch_norm",
+            "spatial_branch_norm", "inter_branch_norm", "agent_branch_norm",
+        }
+        scalars = {
+            "spatial_geo_alpha", "inter_geo_alpha", "tertiary_reliability_alpha",
+            "tertiary_residual_reliability_alpha", "spatial_frame_alpha",
+            "inter_frame_alpha", "agent_evidence_alpha", "spatial_role_alpha",
+            "inter_role_alpha", "seq_branch_gain", "spatial_branch_gain",
+            "inter_branch_gain",
+        }
+        return (len(parts) > 3 and parts[2] in modules) or (
+            len(parts) == 3 and parts[2] in scalars
+        )
+    return False
+
+
 class LQRBind(nn.Module):
-    """Released LQRBind architecture with TTN multi-view propagation and QSE scoring."""
+    """Compact TTN/QSE model. ligand_vocab_size is accepted for legacy callers only."""
 
     def __init__(
         self,
@@ -1094,7 +1054,7 @@ class LQRBind(nn.Module):
         ttn_bond_dim: int = 16,
         quantum_state_dim: int = 16,
         candidate_topk: int = 18,
-        ligand_vocab_size: int = 1,
+        ligand_vocab_size: int | None = None,
         ligand_feature_dim: int = 0,
         use_seq_view: bool = True,
         use_sec_view: bool = True,
@@ -1119,13 +1079,10 @@ class LQRBind(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-        # Parameter-free placeholders retained for byte-identical checkpoint serialization.
-        self.post_layer_norms = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
         self.head = LQRBindQSEReadout(
             hidden_dim=hidden_dim,
             num_scales=num_layers + 1,
             state_dim=quantum_state_dim,
-            ligand_vocab_size=ligand_vocab_size,
             ligand_feature_dim=ligand_feature_dim,
             dropout=dropout,
             candidate_topk=candidate_topk,
@@ -1156,6 +1113,20 @@ class LQRBind(nn.Module):
             phase_confidence_center=0.10,
             coherent_rate_blend=0.55,
         )
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """Load compact weights or the original checkpoint, excluding only retired keys.
+
+        Missing active weights, unexpected non-legacy keys, and shape mismatches
+        still raise with strict=True. The supplied checkpoint is not modified.
+        """
+        filtered = state_dict.copy()
+        for key in list(filtered):
+            if _is_legacy_unused_key(key):
+                del filtered[key]
+        if hasattr(state_dict, "_metadata"):
+            filtered._metadata = state_dict._metadata
+        return super().load_state_dict(filtered, strict=strict, assign=assign)
 
     def forward(self, batch) -> torch.Tensor:
         edge_index_seq = batch.edge_index_seq

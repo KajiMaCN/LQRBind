@@ -73,7 +73,11 @@ The released seed-497 checkpoint reproduces the following historical operating p
 | Apo test | 0.467 | 0.553 | 0.420 | 0.805 |
 | Conformational test | 0.746 | 0.552 | 0.413 | 0.759 |
 
+The compact model contains 2,541,513 parameters. It loads the original checkpoint while excluding inactive legacy parameters, with identical predictions before and after cleanup.
+
 ## Training
+
+Removing inactive modules changes the random initialization sequence for training from scratch. The historical `lqrbind_retraining_reference.json` applies only to the pre-cleanup implementation.
 
 Inspect the complete training command without starting a run:
 
@@ -105,6 +109,7 @@ LQRBind/
 ├── expected_predictions/    # Reference outputs for exact verification
 ├── scripts/                 # Evaluation, training, and verification entry points
 ├── src/                     # Model, data, loss, metric, and training code
+├── tests/                   # Checkpoint compatibility and prediction regression tests
 ├── environment.yml
 └── requirements.txt
 ```
