@@ -73,7 +73,7 @@ The released seed-497 checkpoint reproduces the following historical operating p
 | Apo test | 0.467 | 0.553 | 0.420 | 0.805 |
 | Conformational test | 0.746 | 0.552 | 0.413 | 0.759 |
 
-The compact model contains 2,541,513 parameters. The released checkpoint retains the original seed-497 active weights and omits unused parameters and optimizer state. It is intended for inference, not for resuming the original optimizer. The model also supports loading the original checkpoint.
+The compact model contains 2,541,513 parameters. It loads the original checkpoint while excluding inactive legacy parameters, with identical predictions before and after cleanup.
 
 ## Training
 
