@@ -73,7 +73,7 @@ python scripts/evaluate_lqrbind.py --device auto --save-predictions
 | Apo test | 0.467 | 0.553 | 0.420 | 0.805 |
 | Conformational test | 0.746 | 0.552 | 0.413 | 0.759 |
 
-精简后的模型包含 2,541,513 个参数。加载原始检查点时会排除未参与计算的历史参数，清理前后的预测完全一致。
+LQRBind 包含 2,541,513 个可训练参数。
 
 ## 训练
 
