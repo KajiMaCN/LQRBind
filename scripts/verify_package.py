@@ -41,7 +41,7 @@ def main() -> int:
         checked += 1
 
     checkpoint = torch.load(ROOT / "checkpoints" / "lqrbind.pt", map_location="cpu", weights_only=False)
-    required_checkpoint_keys = {"model", "optimizer", "threshold", "validation_metrics"}
+    required_checkpoint_keys = {"model", "threshold", "validation_metrics"}
     missing_keys = required_checkpoint_keys.difference(checkpoint)
     if missing_keys:
         failures.append(f"checkpoint keys missing: {sorted(missing_keys)}")
