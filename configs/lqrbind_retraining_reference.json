@@ -1,5 +1,4 @@
 {
-  "description": "Historical reference for the pre-cleanup model with inactive parameter slots. Not a reference for training the compact model, whose random initialization order differs. Produced by two independent deterministic seed-497 runs on NVIDIA A40 GPUs.",
   "checkpoint_sha256": "f2d0cd153240cb032a18e4a3e2b4a9012628bc73c147c79e5cf16b673265d9df",
   "best_epoch": 31,
   "best_threshold": 0.6415221095085144,

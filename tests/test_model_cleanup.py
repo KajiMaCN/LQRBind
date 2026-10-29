@@ -30,7 +30,7 @@ class ModelCleanupTests(unittest.TestCase):
         cls.config = json.loads((ROOT / "configs/lqrbind_paper_checkpoint.json").read_text())
         cls.bundle = evaluator.build_bundle(cls.config)
         cls.checkpoint = torch.load(
-            ROOT / "checkpoints/lqrbind.pt", map_location="cpu", weights_only=False
+            ROOT / "checkpoints/lqrbind_seed497.pt", map_location="cpu", weights_only=False
         )
         cls.model = evaluator.build_model(cls.config, cls.bundle).eval()
         cls.model.load_state_dict(cls.checkpoint["model"], strict=True)
@@ -81,17 +81,36 @@ class ModelCleanupTests(unittest.TestCase):
         expected = json.loads((ROOT / "configs/lqrbind_paper_metrics.json").read_text())
         for name, dataset in self.datasets():
             with self.subTest(dataset=name):
+                threshold = evaluator.dataset_threshold(expected[name])
                 prediction = evaluator.predict(self.model, dataset, 36, torch.device("cpu"))
                 with np.load(ROOT / "expected_predictions" / f"{name}_predictions.npz") as ref:
                     np.testing.assert_array_equal(prediction["labels"], ref["labels"])
                     np.testing.assert_allclose(prediction["probabilities"], ref["probabilities"],
                                                rtol=0, atol=5e-4)
+                    reference_metrics = evaluator.compute_binary_metrics(
+                        ref["labels"], ref["probabilities"], threshold
+                    )
                 metrics = evaluator.compute_binary_metrics(
-                    prediction["labels"], prediction["probabilities"], expected[name]["threshold"]
+                    prediction["labels"], prediction["probabilities"], threshold
                 )
-                for metric, actual in [("precision", "precision"), ("recall", "recall"),
-                                       ("mcc", "mcc"), ("auc", "auroc")]:
-                    self.assertAlmostEqual(metrics[actual], expected[name][metric], delta=5e-4)
+                for metric in ("precision", "recall", "mcc", "auroc"):
+                    self.assertAlmostEqual(metrics[metric], reference_metrics[metric], delta=5e-4)
+                paper_metrics = evaluator.compute_binary_metrics(
+                    prediction["labels"], prediction["probabilities"],
+                    float(expected[name]["threshold"]),
+                )
+                for metric in ("precision", "recall", "mcc"):
+                    self.assertAlmostEqual(paper_metrics[metric], expected[name][metric], delta=5e-4)
+                self.assertAlmostEqual(metrics["auroc"], expected[name]["auc"], delta=5e-4)
+
+    def test_dataset_threshold_validation(self):
+        expected = json.loads((ROOT / "configs/lqrbind_paper_metrics.json").read_text())
+        for name in ("test18", "apo_test", "conformational_test"):
+            self.assertEqual(evaluator.dataset_threshold(expected[name]), expected[name]["threshold"])
+        for invalid in ({}, {"threshold": float("nan")}, {"threshold": float("inf")},
+                        {"threshold": -0.1}, {"threshold": 1.1}):
+            with self.subTest(reference=invalid), self.assertRaises(ValueError):
+                evaluator.dataset_threshold(invalid)
 
     def test_exact_pre_cleanup_predictions(self):
         source = os.environ.get("LQRBIND_LEGACY_MODEL")

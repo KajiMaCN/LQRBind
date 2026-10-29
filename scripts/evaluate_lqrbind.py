@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce the paper metrics from the released LQRBind checkpoint."""
+"""Reproduce the paper metrics using the saved dataset-specific thresholds."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config", type=Path, default=ROOT / "configs" / "lqrbind_paper_checkpoint.json"
     )
-    parser.add_argument("--checkpoint", type=Path, default=ROOT / "checkpoints" / "lqrbind.pt")
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "checkpoints" / "lqrbind_seed497.pt")
     parser.add_argument(
         "--thresholds", type=Path, default=ROOT / "configs" / "lqrbind_paper_metrics.json"
     )
@@ -44,6 +44,16 @@ def parse_args() -> argparse.Namespace:
 def resolve_path(path_value: str | Path) -> Path:
     path = Path(path_value)
     return path if path.is_absolute() else ROOT / path
+
+
+def dataset_threshold(reference: dict) -> float:
+    """Read the saved evaluation threshold for one dataset."""
+    if "threshold" not in reference:
+        raise ValueError("Dataset reference is missing its evaluation threshold.")
+    threshold = float(reference["threshold"])
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("Dataset threshold must be finite and between 0 and 1.")
+    return threshold
 
 
 def resolve_device(name: str) -> torch.device:
@@ -116,12 +126,15 @@ def main() -> int:
     model = build_model(config, bundle).to(device)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"], strict=True)
-    print(f"Loaded checkpoint on {device}; stored validation threshold={checkpoint['threshold']:.9f}")
+    print(f"Loaded checkpoint on {device}; evaluation thresholds from {args.thresholds}")
 
     datasets = {
         "test18": bundle.test18,
         "apo_test": bundle.apo,
         "conformational_test": bundle.conformational,
+    }
+    display_names = {
+        "test18": "Test18", "apo_test": "Apo test", "conformational_test": "Conformational test"
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     prediction_dir = args.output.parent / "reproduced_predictions"
@@ -131,10 +144,11 @@ def main() -> int:
     rows = []
     passed = True
     for name, dataset in datasets.items():
-        prediction = predict(model, dataset, int(config["batch_size"]), device)
         target = expected[name]
+        threshold = dataset_threshold(target)
+        prediction = predict(model, dataset, int(config["batch_size"]), device)
         metrics = compute_binary_metrics(
-            prediction["labels"], prediction["probabilities"], float(target["threshold"])
+            prediction["labels"], prediction["probabilities"], threshold
         )
         actual = {
             "precision": metrics["precision"],
@@ -142,22 +156,25 @@ def main() -> int:
             "mcc": metrics["mcc"],
             "auc": metrics["auroc"],
         }
-        differences = {key: abs(actual[key] - float(target[key])) for key in actual}
-        metric_pass = all(value <= args.tolerance for value in differences.values())
-
         reference_path = ROOT / "expected_predictions" / f"{name}_predictions.npz"
-        reference = np.load(reference_path)
-        label_match = np.array_equal(prediction["labels"], reference["labels"])
-        probability_max_abs_diff = float(
-            np.max(np.abs(prediction["probabilities"] - reference["probabilities"]))
-        )
+        with np.load(reference_path) as reference:
+            label_match = np.array_equal(prediction["labels"], reference["labels"])
+            probability_max_abs_diff = float(
+                np.max(np.abs(prediction["probabilities"] - reference["probabilities"]))
+            )
+        differences = {
+            key: abs(value - float(target[key]))
+            for key, value in actual.items()
+        }
+        metric_pass = all(value <= args.tolerance for value in differences.values())
         prediction_pass = label_match and probability_max_abs_diff <= args.tolerance
         dataset_pass = metric_pass and prediction_pass
         passed = passed and dataset_pass
 
         row = {
-            "dataset": target["display_name"],
-            "threshold": target["threshold"],
+            "dataset": display_names[name],
+            "threshold": threshold,
+            "threshold_source": "paper_metrics.dataset",
             **actual,
             "max_metric_abs_diff": max(differences.values()),
             "prediction_max_abs_diff": probability_max_abs_diff,
@@ -165,7 +182,8 @@ def main() -> int:
         }
         rows.append(row)
         print(
-            f"{target['display_name']}: P={actual['precision']:.6f} R={actual['recall']:.6f} "
+            f"{display_names[name]}: threshold={threshold:.9f} "
+            f"P={actual['precision']:.6f} R={actual['recall']:.6f} "
             f"MCC={actual['mcc']:.6f} AUC={actual['auc']:.6f} [{row['status']}]"
         )
 

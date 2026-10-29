@@ -40,7 +40,7 @@ def main() -> int:
             failures.append(f"checksum mismatch: {relative}")
         checked += 1
 
-    checkpoint = torch.load(ROOT / "checkpoints" / "lqrbind.pt", map_location="cpu", weights_only=False)
+    checkpoint = torch.load(ROOT / "checkpoints" / "lqrbind_seed497.pt", map_location="cpu", weights_only=False)
     required_checkpoint_keys = {"model", "threshold", "validation_metrics"}
     missing_keys = required_checkpoint_keys.difference(checkpoint)
     if missing_keys:
