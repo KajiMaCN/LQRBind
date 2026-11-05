@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce the paper metrics from the released LQRBind checkpoint."""
+"""Evaluate a checkpoint using its embedded dataset-specific thresholds."""
 
 from __future__ import annotations
 
@@ -28,10 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config", type=Path, default=ROOT / "configs" / "lqrbind_paper_checkpoint.json"
     )
-    parser.add_argument("--checkpoint", type=Path, default=ROOT / "checkpoints" / "lqrbind.pt")
-    parser.add_argument(
-        "--thresholds", type=Path, default=ROOT / "configs" / "lqrbind_paper_metrics.json"
-    )
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "checkpoints" / "lqrbind_seed497.pt")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--tolerance", type=float, default=5e-4)
     parser.add_argument(
@@ -44,6 +41,23 @@ def parse_args() -> argparse.Namespace:
 def resolve_path(path_value: str | Path) -> Path:
     path = Path(path_value)
     return path if path.is_absolute() else ROOT / path
+
+
+def dataset_threshold(checkpoint: dict, dataset_name: str) -> float:
+    """Read an embedded evaluation threshold without falling back to validation."""
+    thresholds = checkpoint.get("evaluation_thresholds")
+    if not isinstance(thresholds, dict) or dataset_name not in thresholds:
+        raise ValueError(f"Checkpoint is missing an evaluation threshold for {dataset_name}.")
+    value = thresholds[dataset_name]
+    if isinstance(value, bool):
+        raise ValueError("Dataset threshold must be a numeric probability.")
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Dataset threshold must be a numeric probability.") from exc
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("Dataset threshold must be finite and between 0 and 1.")
+    return threshold
 
 
 def resolve_device(name: str) -> torch.device:
@@ -107,21 +121,30 @@ def predict(model: torch.nn.Module, dataset: list, batch_size: int, device: torc
 def main() -> int:
     args = parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
-    expected = json.loads(args.thresholds.read_text(encoding="utf-8"))
     set_seed(int(config["seed"]), deterministic=config.get("deterministic", False))
     device = resolve_device(args.device)
+    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    thresholds = {
+        name: dataset_threshold(checkpoint, name)
+        for name in ("test18", "apo_test", "conformational_test")
+    }
+    expected = checkpoint.get("reference_metrics")
 
     print(f"Loading LQRBind data from {resolve_path(config['data_root'])}")
     bundle = build_bundle(config)
     model = build_model(config, bundle).to(device)
-    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"], strict=True)
-    print(f"Loaded checkpoint on {device}; stored validation threshold={checkpoint['threshold']:.9f}")
+    print(f"Loaded checkpoint on {device}; evaluation thresholds from {args.checkpoint}")
+    if expected is None:
+        print("No checkpoint-specific reference metrics; reporting evaluation without reference checks.")
 
     datasets = {
         "test18": bundle.test18,
         "apo_test": bundle.apo,
         "conformational_test": bundle.conformational,
+    }
+    display_names = {
+        "test18": "Test18", "apo_test": "Apo test", "conformational_test": "Conformational test"
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     prediction_dir = args.output.parent / "reproduced_predictions"
@@ -131,10 +154,10 @@ def main() -> int:
     rows = []
     passed = True
     for name, dataset in datasets.items():
+        threshold = thresholds[name]
         prediction = predict(model, dataset, int(config["batch_size"]), device)
-        target = expected[name]
         metrics = compute_binary_metrics(
-            prediction["labels"], prediction["probabilities"], float(target["threshold"])
+            prediction["labels"], prediction["probabilities"], threshold
         )
         actual = {
             "precision": metrics["precision"],
@@ -142,35 +165,49 @@ def main() -> int:
             "mcc": metrics["mcc"],
             "auc": metrics["auroc"],
         }
-        differences = {key: abs(actual[key] - float(target[key])) for key in actual}
-        metric_pass = all(value <= args.tolerance for value in differences.values())
-
-        reference_path = ROOT / "expected_predictions" / f"{name}_predictions.npz"
-        reference = np.load(reference_path)
-        label_match = np.array_equal(prediction["labels"], reference["labels"])
-        probability_max_abs_diff = float(
-            np.max(np.abs(prediction["probabilities"] - reference["probabilities"]))
-        )
-        prediction_pass = label_match and probability_max_abs_diff <= args.tolerance
-        dataset_pass = metric_pass and prediction_pass
-        passed = passed and dataset_pass
+        max_metric_abs_diff = None
+        probability_max_abs_diff = None
+        status = "EVALUATED"
+        if expected is not None:
+            target = expected[name]
+            reference_path = ROOT / "expected_predictions" / f"{name}_predictions.npz"
+            with np.load(reference_path) as reference:
+                label_match = np.array_equal(prediction["labels"], reference["labels"])
+                probability_max_abs_diff = float(
+                    np.max(np.abs(prediction["probabilities"] - reference["probabilities"]))
+                )
+            differences = {
+                key: abs(value - float(target[key]))
+                for key, value in actual.items()
+            }
+            max_metric_abs_diff = max(differences.values())
+            metric_pass = all(value <= args.tolerance for value in differences.values())
+            prediction_pass = label_match and probability_max_abs_diff <= args.tolerance
+            dataset_pass = metric_pass and prediction_pass
+            passed = passed and dataset_pass
+            status = "PASS" if dataset_pass else "FAIL"
 
         row = {
-            "dataset": target["display_name"],
-            "threshold": target["threshold"],
+            "dataset": display_names[name],
+            "threshold": threshold,
+            "threshold_source": "checkpoint.evaluation_thresholds",
             **actual,
-            "max_metric_abs_diff": max(differences.values()),
+            "max_metric_abs_diff": max_metric_abs_diff,
             "prediction_max_abs_diff": probability_max_abs_diff,
-            "status": "PASS" if dataset_pass else "FAIL",
+            "status": status,
         }
         rows.append(row)
         print(
-            f"{target['display_name']}: P={actual['precision']:.6f} R={actual['recall']:.6f} "
+            f"{display_names[name]}: threshold={threshold:.9f} "
+            f"P={actual['precision']:.6f} R={actual['recall']:.6f} "
             f"MCC={actual['mcc']:.6f} AUC={actual['auc']:.6f} [{row['status']}]"
         )
 
         if args.save_predictions:
-            np.savez_compressed(prediction_dir / f"{name}_predictions.npz", **prediction)
+            np.savez_compressed(
+                prediction_dir / f"{name}_predictions.npz", **prediction,
+                predictions=(prediction["probabilities"].astype(np.float64) >= threshold).astype(np.int64),
+            )
 
     with args.output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))

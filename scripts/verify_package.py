@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 from pathlib import Path
 
@@ -40,18 +41,34 @@ def main() -> int:
             failures.append(f"checksum mismatch: {relative}")
         checked += 1
 
-    checkpoint = torch.load(ROOT / "checkpoints" / "lqrbind.pt", map_location="cpu", weights_only=False)
-    required_checkpoint_keys = {"model", "threshold", "validation_metrics"}
-    missing_keys = required_checkpoint_keys.difference(checkpoint)
-    if missing_keys:
-        failures.append(f"checkpoint keys missing: {sorted(missing_keys)}")
+    for seed in (148, 184, 224, 389, 497):
+        path = ROOT / "checkpoints" / f"lqrbind_seed{seed}.pt"
+        if not path.is_file():
+            failures.append(f"missing checkpoint: {path.name}")
+            continue
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        required_checkpoint_keys = {"model", "threshold", "validation_metrics", "evaluation_thresholds"}
+        if seed == 497:
+            required_checkpoint_keys.add("reference_metrics")
+        missing_keys = required_checkpoint_keys.difference(checkpoint)
+        if missing_keys:
+            failures.append(f"{path.name} keys missing: {sorted(missing_keys)}")
+        thresholds = checkpoint.get("evaluation_thresholds", {})
+        for name in ("test18", "apo_test", "conformational_test"):
+            try:
+                value = thresholds[name]
+                valid = not isinstance(value, bool) and math.isfinite(float(value)) and 0 <= float(value) <= 1
+            except (KeyError, TypeError, ValueError):
+                valid = False
+            if not valid:
+                failures.append(f"{path.name}: missing or invalid evaluation threshold for {name}")
 
     if failures:
         print("Package verification failed:")
         for failure in failures:
             print(f"- {failure}")
         return 1
-    print(f"Verified {checked} files and checkpoint structure: PASS")
+    print(f"Verified {checked} files and five checkpoint structures: PASS")
     return 0
 
 
